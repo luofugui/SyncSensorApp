@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct SyncSensorAppApp: App {
+    @StateObject private var sensorManager = SensorManager()
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+            WindowGroup {
+                ContentView()
+                    .environmentObject(sensorManager)
         }
     }
 }

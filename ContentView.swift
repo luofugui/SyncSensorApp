@@ -100,16 +100,9 @@ import AVFoundation
 
 struct MeasurementView: View {
     @EnvironmentObject var sensorManager: SensorManager
-    @State private var audioLevels: [Float] = Array(repeating: 0, count: 80)
-    @State private var imuXRaw: [Double] = Array(repeating: 0, count: 80)
-    @State private var imuYRaw: [Double] = Array(repeating: 0, count: 80)
-    @State private var imuZRaw: [Double] = Array(repeating: 0, count: 80)
-    // 延迟补偿后的IMU数据
-    private var imuDelayFrames: Int { 4 } // 0.05s*4=0.2s，实际可调
-    private var imuX: [Double] { Array(imuXRaw.dropFirst(imuDelayFrames)) + Array(repeating: 0, count: imuDelayFrames) }
-    private var imuY: [Double] { Array(imuYRaw.dropFirst(imuDelayFrames)) + Array(repeating: 0, count: imuDelayFrames) }
-    private var imuZ: [Double] { Array(imuZRaw.dropFirst(imuDelayFrames)) + Array(repeating: 0, count: imuDelayFrames) }
-
+    @State private var audioLevels: [Float] = Array(repeating: 0, count: 50)
+    @State private var imuValues: [Double] = Array(repeating: 0, count: 50)
+    
     // 闪烁红点动画控制
     @State private var isBlinking: Bool = false
 
@@ -154,6 +147,18 @@ struct MeasurementView: View {
                     .cornerRadius(8)
                     .padding(.top, 12)
                 }
+                
+                // 倒计时全屏提示
+                if sensorManager.isCountingDown {
+                    VStack {
+                        Spacer()
+                        Text("\(sensorManager.countdownValue)")
+                            .font(.system(size: 80, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.5), radius: 5, x: 0, y: 5)
+                        Spacer()
+                    }
+                }
             }
             .padding(.horizontal)
 
@@ -165,15 +170,14 @@ struct MeasurementView: View {
                     .frame(height: 60)
                     .background(Color(.systemGray6))
                     .cornerRadius(8)
-                    .padding(.horizontal, 8) // 让波形更宽
-            }
+            }.padding(.horizontal)
 
-            // IMU三轴折线图
+            // IMU波形
             VStack(alignment: .leading) {
-                Text("IMU Waveform (XYZ)")
+                Text("IMU Waveform (Z-Acc)")
                     .font(.caption)
-                IMULineChartView(x: imuX, y: imuY, z: imuZ)
-                    .frame(height: 80)
+                WaveformView(values: imuValues.map{ Float($0) })
+                    .frame(height: 60)
                     .background(Color(.systemGray6))
                     .cornerRadius(8)
             }.padding(.horizontal)
@@ -182,19 +186,19 @@ struct MeasurementView: View {
             
             // 录制/停止 按钮
             Button(action: {
-                if sensorManager.isRecording {
+                if sensorManager.isRecording || sensorManager.isCountingDown {
                     sensorManager.stopRecording()
                     isBlinking = false // 重置闪烁状态
                 } else {
-                    sensorManager.startRecording()
+                    sensorManager.startCountdown() // 改为调用倒计时
                 }
             }) {
                 ZStack {
                     Circle() // 外圈
-                        .stroke(sensorManager.isRecording ? Color.red : Color.gray, lineWidth: 3)
+                        .stroke((sensorManager.isRecording || sensorManager.isCountingDown) ? Color.red : Color.gray, lineWidth: 3)
                         .frame(width: 68, height: 68)
                     
-                    if sensorManager.isRecording {
+                    if sensorManager.isRecording || sensorManager.isCountingDown {
                         RoundedRectangle(cornerRadius: 6) // 停止方块
                             .fill(Color.red)
                             .frame(width: 24, height: 24)
@@ -219,18 +223,6 @@ struct MeasurementView: View {
                 }
             }
         }
-        .onReceive(timer) { _ in
-            // 采样音频电平
-            audioLevels.append(sensorManager.currentAudioLevel)
-            if audioLevels.count > 80 { audioLevels.removeFirst() }
-            // 采样IMU三轴（原始）
-            imuXRaw.append(sensorManager.currentIMUAcceleration.x)
-            if imuXRaw.count > 80 { imuXRaw.removeFirst() }
-            imuYRaw.append(sensorManager.currentIMUAcceleration.y)
-            if imuYRaw.count > 80 { imuYRaw.removeFirst() }
-            imuZRaw.append(sensorManager.currentIMUAcceleration.z)
-            if imuZRaw.count > 80 { imuZRaw.removeFirst() }
-        }
         // 修复 iOS 17 的 onChange 弃用警告
         .onChange(of: sensorManager.hasPermissions) { _, newValue in
             // 监听到权限被授予后，若 session 未运行则启动它
@@ -240,7 +232,6 @@ struct MeasurementView: View {
                 }
             }
         }
-     
     }
 }
 
@@ -248,68 +239,20 @@ struct WaveformView: View {
     let values: [Float]
     var body: some View {
         GeometryReader { geo in
-            let spacing: CGFloat = 0.5 // 更细的间隔
+            // 修正宽度计算，避免加上 HStack 的间距(spacing)后总宽度溢出屏幕
+            let spacing: CGFloat = 1
             let totalSpacing = spacing * CGFloat(values.count - 1)
-            let width = max(1, (geo.size.width - totalSpacing) / CGFloat(values.count))
+            let width = max(0, (geo.size.width - totalSpacing) / CGFloat(values.count))
+            
             HStack(alignment: .center, spacing: spacing) {
                 ForEach(0..<values.count, id: \ .self) { i in
                     Capsule()
                         .fill(Color.blue)
-                        .frame(width: width, height: min(geo.size.height, max(1, CGFloat(abs(values[i])) * 50)))
+                        // 修复：先乘50，再限制最小高度为2。同时增加 min(geo.size.height, ...) 防止用力晃动手机时波形超出容器界限
+                        .frame(width: width, height: min(geo.size.height, max(2, CGFloat(abs(values[i])) * 50)))
                 }
             }
-            .frame(maxHeight: .infinity, alignment: .center)
-        }
-    }
-}
-
-// IMU三轴折线图
-struct IMULineChartView: View {
-    let x: [Double]
-    let y: [Double]
-    let z: [Double]
-
-    private func points(_ arr: [Double], w: CGFloat, h: CGFloat, maxAbs: Double) -> [CGPoint] {
-        let count = arr.count
-        guard count > 1 else { return [] }
-        return (0..<count).map { i in
-            let px = CGFloat(i) / CGFloat(count-1) * w
-            return CGPoint(x: px, y: h/2 - CGFloat(arr[i]) / CGFloat(maxAbs) * h/2)
-        }
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            let count = min(x.count, y.count, z.count)
-            let w = geo.size.width
-            let h = geo.size.height
-            let maxX = x.map{abs($0)}.max() ?? 1
-            let maxY = y.map{abs($0)}.max() ?? 1
-            let maxZ = z.map{abs($0)}.max() ?? 1
-            let maxAbs = max(maxX, maxY, maxZ, 1)
-            let px = points(Array(x.suffix(count)), w: w, h: h, maxAbs: maxAbs)
-            let py = points(Array(y.suffix(count)), w: w, h: h, maxAbs: maxAbs)
-            let pz = points(Array(z.suffix(count)), w: w, h: h, maxAbs: maxAbs)
-            ZStack {
-                if px.count > 1 {
-                    Path { path in
-                        path.move(to: px[0])
-                        for p in px { path.addLine(to: p) }
-                    }.stroke(Color.red, lineWidth: 2)
-                }
-                if py.count > 1 {
-                    Path { path in
-                        path.move(to: py[0])
-                        for p in py { path.addLine(to: p) }
-                    }.stroke(Color.green, lineWidth: 2)
-                }
-                if pz.count > 1 {
-                    Path { path in
-                        path.move(to: pz[0])
-                        for p in pz { path.addLine(to: p) }
-                    }.stroke(Color.blue, lineWidth: 2)
-                }
-            }
+            .frame(maxHeight: .infinity, alignment: .center) // 确保波形整体垂直居中
         }
     }
 }
