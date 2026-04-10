@@ -53,4 +53,9 @@ class ZipManager: ObservableObject {
             }
         }
     }
+    
+    // 清理生成的临时 ZIP 文件
+    func cleanup(url: URL) {
+        try? FileManager.default.removeItem(at: url)
+    }
 }

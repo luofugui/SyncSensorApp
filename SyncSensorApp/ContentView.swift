@@ -468,7 +468,11 @@ struct DataView: View {
                         shareZip(url: url)
                     }
                 }
-                Button("关闭", role: .cancel) {}
+                Button("关闭", role: .cancel) {
+                    if let url = zipResultURL {
+                        zipManager.cleanup(url: url)
+                    }
+                }
             }, message: {
                 if let url = zipResultURL {
                     Text(url.lastPathComponent)
@@ -482,6 +486,12 @@ struct DataView: View {
     // 分享zip
     func shareZip(url: URL) {
         let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        
+        // 分享面板关闭（无论成功还是取消）后，自动清理临时 zip 文件
+        av.completionWithItemsHandler = { [weak zipManager] _, _, _, _ in
+            zipManager?.cleanup(url: url)
+        }
+        
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let root = windowScene.windows.first?.rootViewController {
             root.present(av, animated: true)
