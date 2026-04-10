@@ -33,16 +33,7 @@ time    seconds_elapsed    z    y    x
 ```
 *(Note: The `time` column uses the absolute system uptime in seconds.)*
 
-## 🛠 Post-Processing & Alignment
 
-Because audio propagation and OS audio pipelines introduce a fixed hardware latency, the IMU and Audio signals have a constant time offset. 
-To achieve perfect alignment in post-processing (e.g., using Python/NumPy):
-
-1. Perform a "Tap Test" (tap the phone with a hard object once during recording).
-2. Find the peak timestamp in `Accelerometer.csv` ($T_{imu}$).
-3. Find the peak timestamp in the extracted `.wav` audio ($T_{audio}$).
-4. Calculate the latency: $Offset = T_{audio} - T_{imu}$.
-5. Subtract this offset from all audio timestamps during your offline analysis.
 
 ## ⚙️ Requirements
 
