@@ -10,11 +10,16 @@ import AVFoundation
 import CoreMotion
 import Combine
 import AudioToolbox
+import UIKit
 
 class SensorManager: NSObject, ObservableObject {
     // 录制状态
     @Published var isRecording = false
     @Published var hasPermissions = false
+    // 新增：预热与倒计时状态
+    @Published var isWarmingUp = false
+    @Published var countdown: Int = 0
+
     
     // 录制时长跟踪
     @Published var recordingDuration: TimeInterval = 0.0
@@ -23,6 +28,9 @@ class SensorManager: NSObject, ObservableObject {
     // 移除 @Published，防止高频(100Hz)数据更新导致 SwiftUI 界面全局疯狂重绘而卡死
     var currentAudioLevel: Float = 0.0
     var currentIMUAcceleration: (x: Double, y: Double, z: Double) = (0.0, 0.0, 0.0)
+    var currentIMUGravity: (x: Double, y: Double, z: Double) = (0.0, 0.0, 0.0)
+    var currentIMUGyroscope: (x: Double, y: Double, z: Double) = (0.0, 0.0, 0.0)
+    var currentIMUOrientation: (roll: Double, pitch: Double, yaw: Double) = (0.0, 0.0, 0.0)
 
     // 设置项
     @Published var useFrontCamera: Bool = false {
@@ -64,6 +72,25 @@ class SensorManager: NSObject, ObservableObject {
     private let videoQueue = DispatchQueue(label: "com.jeffluo.videoQueue", qos: .userInteractive)
     private let audioQueue = DispatchQueue(label: "com.jeffluo.audioQueue", qos: .userInteractive)
     private let imuQueue = OperationQueue()
+    
+    // 3. 文件写入器与队列
+    private var currentSessionURL: URL?
+    
+    // 高效的音视频写入器
+    private var assetWriter: AVAssetWriter?
+    private var videoWriterInput: AVAssetWriterInput?
+    private var audioWriterInput: AVAssetWriterInput?
+    private var hasStartedAudioSession = false
+    
+    private var accFile, gravFile, gyroFile, oriFile: FileHandle?
+
+    // Metadata
+    private var firstTimestamp: Double?
+    private var actualVideoFrameRate: Double?
+    private let timestampLock = NSLock()
+    private var recordingStartTime: Date?
+    private var targetStartTime: Double? // 绝对物理起跑线
+
 
     override init() {
         super.init()
@@ -72,10 +99,10 @@ class SensorManager: NSObject, ObservableObject {
 
     // 视频帧率选项
     enum VideoFrameRateOption: String, CaseIterable, Identifiable {
-        case max = "最大"
+        case max = "Max"
         case s1 = "1s"
         case s10 = "10s"
-        case custom = "自定义"
+        case custom = "Custom"
         var id: String { self.rawValue }
     }
 
@@ -83,7 +110,7 @@ class SensorManager: NSObject, ObservableObject {
     enum IMUSampleRateOption: String, CaseIterable, Identifiable {
         case hz100 = "100Hz"
         case hz20 = "20Hz"
-        case custom = "自定义"
+        case custom = "Custom"
         var id: String { self.rawValue }
     }
     
@@ -103,44 +130,62 @@ class SensorManager: NSObject, ObservableObject {
     
     // MARK: - 硬件初始化
     func setupHardware() {
-        captureSession.beginConfiguration()
-        
-        // --- 视频配置 ---
-        let position: AVCaptureDevice.Position = useFrontCamera ? .front : .back
-        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
+          captureSession.beginConfiguration()
+
+          // 设置分辨率为1280x720（720p）
+          if captureSession.canSetSessionPreset(.hd1280x720) {
+            captureSession.sessionPreset = .hd1280x720
+          }
+
+          // --- 视频配置 ---
+          let position: AVCaptureDevice.Position = useFrontCamera ? .front : .back
+          guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
               let videoInput = try? AVCaptureDeviceInput(device: videoDevice) else { return }
-        if captureSession.canAddInput(videoInput) { captureSession.addInput(videoInput) }
-        
-        videoOutput.setSampleBufferDelegate(self, queue: videoQueue)
-        videoOutput.alwaysDiscardsLateVideoFrames = true
-        if captureSession.canAddOutput(videoOutput) { captureSession.addOutput(videoOutput) }
-        
-        // --- 音频配置 ---
-        guard let audioDevice = AVCaptureDevice.default(for: .audio),
+          if captureSession.canAddInput(videoInput) { captureSession.addInput(videoInput) }
+
+          videoOutput.setSampleBufferDelegate(self, queue: videoQueue)
+          videoOutput.alwaysDiscardsLateVideoFrames = true
+          if captureSession.canAddOutput(videoOutput) { captureSession.addOutput(videoOutput) }
+
+          // --- 音频配置 ---
+          guard let audioDevice = AVCaptureDevice.default(for: .audio),
               let audioInput = try? AVCaptureDeviceInput(device: audioDevice) else { return }
-        if captureSession.canAddInput(audioInput) { captureSession.addInput(audioInput) }
-        
-        audioOutput.setSampleBufferDelegate(self, queue: audioQueue)
-        if captureSession.canAddOutput(audioOutput) { captureSession.addOutput(audioOutput) }
-        
-        captureSession.commitConfiguration()
-        
-        updateVideoFrameRate()
-        
-        // --- IMU 配置 ---
-        if motionManager.isDeviceMotionAvailable {
+          if captureSession.canAddInput(audioInput) { captureSession.addInput(audioInput) }
+
+          audioOutput.setSampleBufferDelegate(self, queue: audioQueue)
+          if captureSession.canAddOutput(audioOutput) { captureSession.addOutput(audioOutput) }
+
+          captureSession.commitConfiguration()
+
+          updateVideoFrameRate()
+
+          // --- IMU 配置 ---
+          if motionManager.isDeviceMotionAvailable {
             updateIMUSampleRate()
-            
             // 提前启动 IMU 数据流以供 UI 实时预览
             motionManager.startDeviceMotionUpdates(to: imuQueue) { [weak self] (motion, error) in
                 guard let self = self, let motion = motion else { return }
                 
                 // 纯后台线程更新数据，彻底放过主线程
                 self.currentIMUAcceleration = (motion.userAcceleration.x, motion.userAcceleration.y, motion.userAcceleration.z)
+                self.currentIMUGravity = (motion.gravity.x, motion.gravity.y, motion.gravity.z)
+                self.currentIMUGyroscope = (motion.rotationRate.x, motion.rotationRate.y, motion.rotationRate.z)
+                self.currentIMUOrientation = (motion.attitude.roll, motion.attitude.pitch, motion.attitude.yaw)
                 
-                if self.isRecording {
+                if self.isRecording || self.isWarmingUp {
                     let imuTime = motion.timestamp
-                    print("[\(String(format: "%.5f", imuTime))] 📳 IMU Acc: X:\(String(format: "%.3f", motion.userAcceleration.x)) Y:\(String(format: "%.3f", motion.userAcceleration.y)) Z:\(String(format: "%.3f", motion.userAcceleration.z))")
+                    
+                    // 核心阀门：扔掉 3 秒前预热阶段的 IMU 脏数据
+                    guard let target = self.targetStartTime, imuTime >= target else { return }
+                    
+                    // 首次闯过闸门
+                    self.timestampLock.lock()
+                    if self.firstTimestamp == nil {
+                        self.firstTimestamp = imuTime
+                    }
+                    self.timestampLock.unlock()
+                    
+                    self.writeIMU(motion, timestamp: imuTime)
                 }
             }
         }
@@ -227,57 +272,277 @@ class SensorManager: NSObject, ObservableObject {
     func startRecording() {
         guard hasPermissions else { return }
         
-        DispatchQueue.main.async {
-            self.isRecording = true
-            self.recordingDuration = 0.0
-            self.recordingTimer?.invalidate()
-            
-            // 录制秒表：使用 scheduledTimer 并加入 .common 模式（秒表需要长时间累加防漂移，Timer 更适合）
-            let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                self?.recordingDuration += 1.0
-            }
-            RunLoop.main.add(timer, forMode: .common)
-            self.recordingTimer = timer
-        }
-        print("====== 🚀 开始录制 (纳秒级时间戳同步测试) ======")
+        // --- 1. 设置未来的绝对起跑线（当前开机时间 + 3秒） ---
+        let absoluteNow = CACurrentMediaTime()
+        self.targetStartTime = absoluteNow + 3.0
         
-        // 1. 启动音视频流
-        DispatchQueue.global(qos: .userInitiated).async {
-            self.captureSession.startRunning()
+        // 重置状态
+        self.firstTimestamp = nil
+        self.actualVideoFrameRate = nil
+        self.recordingStartTime = Date().addingTimeInterval(3.0) // UI 上显示的时间也要加3秒
+        self.hasStartedAudioSession = false
+        
+        // --- 2. 创建目录、初始化文件与写入器 (保持你原来的逻辑) ---
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        let folderName = "Record_" + formatter.string(from: self.recordingStartTime!)
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let sessionURL = docs.appendingPathComponent(folderName)
+        try? FileManager.default.createDirectory(at: sessionURL, withIntermediateDirectories: true)
+        self.currentSessionURL = sessionURL
+        
+        // --- 2a. 获取实际视频帧率 ---
+        if let videoInput = captureSession.inputs.compactMap({ $0 as? AVCaptureDeviceInput }).first(where: { $0.device.hasMediaType(.video) }) {
+            let videoDevice = videoInput.device
+            if videoDevice.activeVideoMinFrameDuration.seconds > 0 {
+                self.actualVideoFrameRate = 1.0 / videoDevice.activeVideoMinFrameDuration.seconds
+            }
         }
+        
+        // --- 2b. 配置高效的 AVAssetWriter，用于将音视频流写入单个 MP4 文件 ---
+        let videoURL = sessionURL.appendingPathComponent("Video.mp4")
+        assetWriter = try? AVAssetWriter(url: videoURL, fileType: .mp4)
+
+        // 配置视频输入
+        let videoSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: 1280,
+            AVVideoHeightKey: 720,
+        ]
+        videoWriterInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        videoWriterInput?.expectsMediaDataInRealTime = true
+        if let vwi = videoWriterInput, assetWriter?.canAdd(vwi) == true {
+            assetWriter?.add(vwi)
+        }
+
+        // 配置音频输入
+        let audioSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: 48000,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 128000
+        ]
+        audioWriterInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
+        audioWriterInput?.expectsMediaDataInRealTime = true
+        if let awi = audioWriterInput, assetWriter?.canAdd(awi) == true {
+            assetWriter?.add(awi)
+        }
+        assetWriter?.startWriting()
+        
+        // --- 2c. 创建 IMU CSV 句柄并写入表头 ---
+        let xyzHeader = "time\tseconds_elapsed\tz\ty\tx\n"
+        let rpyHeader = "time\tseconds_elapsed\tyaw\tpitch\troll\n"
+        accFile = createCSV(name: "Accelerometer.csv", in: sessionURL, header: xyzHeader)
+        gravFile = createCSV(name: "Gravity.csv", in: sessionURL, header: xyzHeader)
+        gyroFile = createCSV(name: "Gyroscope.csv", in: sessionURL, header: xyzHeader)
+        oriFile = createCSV(name: "Orientation.csv", in: sessionURL, header: rpyHeader)
+        
+        // --- 3. 启动 UI 倒计时，并标记为预热状态 ---
+        DispatchQueue.main.async {
+            self.isWarmingUp = true
+            self.countdown = 3
+            
+            Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+                guard let self = self else { return }
+                self.countdown -= 1
+                
+                // 3秒倒计时结束，正式转为录制状态！
+                if self.countdown == 0 {
+                    timer.invalidate()
+                    self.isWarmingUp = false
+                    self.isRecording = true
+                    self.recordingDuration = 0.0
+                    self.recordingTimer?.invalidate()
+                    
+                    self.recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                        self?.recordingDuration += 1.0
+                    }
+                    RunLoop.main.add(self.recordingTimer!, forMode: .common)
+                }
+            }
+        }
+        print("====== ⏳ 硬件启动，开始 3 秒预热抛弃数据... ======")
     }
     
     func stopRecording() {
         DispatchQueue.main.async {
             self.isRecording = false
+            self.isWarmingUp = false // 增加这行
+            self.targetStartTime = nil // 增加这行
             self.recordingTimer?.invalidate()
             self.recordingTimer = nil
         }
-        // 注释掉停止代码：保证停止录制后，画面和波形依然可以实时预览
-        // captureSession.stopRunning()
-        // motionManager.stopDeviceMotionUpdates()
+        
+        if let sessionURL = self.currentSessionURL {
+            createMetadataFile(at: sessionURL)
+        }
+        
+        // 收尾音视频写入
+        videoWriterInput?.markAsFinished()
+        audioWriterInput?.markAsFinished()
+        assetWriter?.finishWriting { [weak self] in
+            self?.assetWriter = nil
+            self?.videoWriterInput = nil
+            self?.audioWriterInput = nil
+        }
+        
+        // 关闭 IMU 句柄
+        try? accFile?.close()
+        try? gravFile?.close()
+        try? gyroFile?.close()
+        try? oriFile?.close()
         print("====== 🛑 停止录制 ======")
+    }
+    
+    private func createCSV(name: String, in folder: URL, header: String) -> FileHandle? {
+        let url = folder.appendingPathComponent(name)
+        // 1. 创建文件并写入表头。这会覆盖任何同名旧文件，确保从新文件开始。
+        FileManager.default.createFile(atPath: url.path, contents: header.data(using: .utf8), attributes: nil)
+        
+        do {
+            // 2. 以“更新”模式打开文件句柄，这种模式不会清空文件内容。
+            let fileHandle = try FileHandle(forUpdating: url)
+            // 3. 将指针移动到文件末尾，为“追加”数据做准备。
+            fileHandle.seekToEndOfFile()
+            return fileHandle
+        } catch { return nil }
+    }
+    
+    private func createMetadataFile(at sessionURL: URL) {
+        let metadataURL = sessionURL.appendingPathComponent("Metadata.csv")
+
+        // 1. version
+        let version = "3"
+
+        // 2. device name
+        let deviceName = UIDevice.current.modelName // 使用更具体的手机型号
+
+        // 3. recording start uptime (ms)
+        let recordingUptimeMs = Int64((firstTimestamp ?? 0) * 1000)
+
+        // 4. recording start uptime (s)
+        let recordingUptimeString = String(format: "%.5f", firstTimestamp ?? 0)
+
+        // 5. recording timezone
+        let recordingTimezone = TimeZone.current.identifier
+
+        // 6. platform
+        let platform = "ios"
+
+        // 7. appVersion
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "N/A"
+
+        // 8. device id
+        let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "N/A"
+
+        // 9. sensors
+        let sensors = "Accelerometer|Gravity|Gyroscope|Orientation|Camera|Microphone"
+
+        // 10. sampleRateMs (period in milliseconds)
+        let imuIntervalMs = Int(motionManager.deviceMotionUpdateInterval * 1000)
+        let videoIntervalMs = Int((actualVideoFrameRate.map { 1.0 / $0 } ?? 0) * 1000)
+        let sampleRateMs = "\(imuIntervalMs)|\(imuIntervalMs)|\(imuIntervalMs)|\(imuIntervalMs)|\(videoIntervalMs)|0" // Using 0 for Microphone as its rate is very high
+
+        // 11. standardisation
+        let standardisation = "FALSE"
+
+        // 12. platform version
+        let platformVersion = UIDevice.current.systemVersion
+
+        // 13. fusion
+        let fusion = "system"
+
+        let header = ["version", "device name", "recording start uptime ms", "recording start uptime s", "recording timezone", "platform", "appVersion", "device id", "sensors", "sampleRateMs", "standardisation", "platform version", "fusion"].joined(separator: "\t")
+        let data = [version, deviceName, String(recordingUptimeMs), recordingUptimeString, recordingTimezone, platform, appVersion, deviceId, sensors, sampleRateMs, standardisation, platformVersion, fusion].joined(separator: "\t")
+        let contents = header + "\n" + data
+
+        try? contents.write(to: metadataURL, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: - MP4音频提取为WAV
+    /// 从MP4文件中提取音频为WAV，完成后回调主线程
+    func extractAudioFromVideo(videoURL: URL) async throws -> URL {
+        let asset = AVURLAsset(url: videoURL)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        guard let audioTrack = audioTracks.first else {
+            throw NSError(domain: "No audio track", code: -1, userInfo: [NSLocalizedDescriptionKey: "The video file does not contain an audio track."])
+        }
+        
+        let worker = try AudioExtractorWorker(videoURL: videoURL, asset: asset, audioTrack: audioTrack)
+        return try await withCheckedThrowingContinuation { continuation in
+            worker.extract { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+
+    // 提取音频的工作类，使用 @unchecked Sendable 屏蔽底层 C 语言框架的并发警告
+    private final class AudioExtractorWorker: @unchecked Sendable {
+        let outputURL: URL
+        private let reader: AVAssetReader
+        private let writer: AVAssetWriter
+        private let input: AVAssetWriterInput
+        private let trackOutput: AVAssetReaderTrackOutput
+
+        init(videoURL: URL, asset: AVAsset, audioTrack: AVAssetTrack) throws {
+            self.outputURL = videoURL.deletingPathExtension().appendingPathExtension("wav")
+            try? FileManager.default.removeItem(at: outputURL)
+
+            // 必须使用与 audioTrack 同属一个实例的 asset
+            self.reader = try AVAssetReader(asset: asset)
+            let outputSettings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48000,
+                AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsNonInterleaved: false, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false
+            ]
+            self.trackOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: outputSettings)
+            self.reader.add(trackOutput)
+
+            self.writer = try AVAssetWriter(url: outputURL, fileType: .wav)
+            self.input = AVAssetWriterInput(mediaType: .audio, outputSettings: outputSettings)
+            self.input.expectsMediaDataInRealTime = false
+            self.writer.add(input)
+            self.writer.shouldOptimizeForNetworkUse = false
+        }
+
+        func extract(completion: @escaping (Result<URL, Error>) -> Void) {
+            writer.startWriting()
+            reader.startReading()
+            writer.startSession(atSourceTime: .zero)
+            let queue = DispatchQueue(label: "audio-extraction-queue")
+            input.requestMediaDataWhenReady(on: queue) {
+                while self.input.isReadyForMoreMediaData {
+                    if let sampleBuffer = self.trackOutput.copyNextSampleBuffer() {
+                        self.input.append(sampleBuffer)
+                    } else {
+                        self.input.markAsFinished()
+                        self.writer.finishWriting {
+                            if self.writer.status == .completed { completion(.success(self.outputURL)) }
+                            else { completion(.failure(self.writer.error ?? NSError(domain: "AVAssetWriter", code: -2))) }
+                        }
+                        break
+                    }
+                }
+            }
+        }
     }
 }
 
 // MARK: - 音视频帧底层回调
 extension SensorManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
-    
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         
-        // --- 1. UI 数据实时更新（非录制状态也需要） ---
+        // --- 1. UI 数据实时更新（非录制和非预热状态也需要，为了让屏幕波形一直动） ---
         if output == audioOutput, let channel = connection.audioChannels.first {
-            let power = channel.averagePowerLevel // 范围大约在 -120dB 到 0dB 之间
-            let level = max(0.0, min(1.0, (power + 50) / 50)) // 映射 -50~0dB 为 0.0~1.0 供波形显示
-            // 纯后台线程更新数据，彻底放过主线程
+            let power = channel.averagePowerLevel
+            let level = max(0.0, min(1.0, (power + 50) / 50))
             self.currentAudioLevel = level
         }
         
-        // --- 2. 录制状态下才打印/保存数据 ---
-        guard isRecording else { return }
+        // --- 2. 状态放行：只有在“正在录制”或“正在预热”时，才继续往下走 ---
+        guard isRecording || isWarmingUp else { return }
         
         // 提取硬件层面的绝对呈现时间 (Presentation Timestamp)
-        // 这个时间戳与 IMU 的 timestamp 共享同一个底层硬件时钟！
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let timestampInSeconds = CMTimeGetSeconds(pts)
         

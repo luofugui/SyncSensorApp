@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		512406EC2F8345EF00967A6A /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 512406EB2F8345EF00967A6A /* ZIPFoundation */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		5178D42F2F7620D0005D6E85 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				512406EC2F8345EF00967A6A /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -72,12 +77,20 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		512406EA2F8345EF00967A6A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		5178D4182F7620CF005D6E85 = {
 			isa = PBXGroup;
 			children = (
 				5178D4232F7620CF005D6E85 /* SyncSensorApp */,
 				5178D4312F7620D0005D6E85 /* SyncSensorAppTests */,
 				5178D43B2F7620D0005D6E85 /* SyncSensorAppUITests */,
+				512406EA2F8345EF00967A6A /* Frameworks */,
 				5178D4222F7620CF005D6E85 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -112,6 +125,7 @@
 			);
 			name = SyncSensorApp;
 			packageProductDependencies = (
+				512406EB2F8345EF00967A6A /* ZIPFoundation */,
 			);
 			productName = SyncSensorApp;
 			productReference = 5178D4212F7620CF005D6E85 /* SyncSensorApp.app */;
@@ -195,6 +209,10 @@
 			);
 			mainGroup = 5178D4182F7620CF005D6E85;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				512406E82F83435B00967A6A /* XCRemoteSwiftPackageReference "swift-algorithms" */,
+				512406E92F8343C800967A6A /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5178D4222F7620CF005D6E85 /* Products */;
 			projectDirPath = "";
@@ -564,6 +582,33 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		512406E82F83435B00967A6A /* XCRemoteSwiftPackageReference "swift-algorithms" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-algorithms.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.2.1;
+			};
+		};
+		512406E92F8343C800967A6A /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.20;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		512406EB2F8345EF00967A6A /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 512406E92F8343C800967A6A /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 5178D4192F7620CF005D6E85 /* Project object */;
 }
