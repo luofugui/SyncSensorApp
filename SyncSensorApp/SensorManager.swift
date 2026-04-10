@@ -13,26 +13,26 @@ import AudioToolbox
 import UIKit
 
 class SensorManager: NSObject, ObservableObject {
-    // 录制状态
+    // Recording status
     @Published var isRecording = false
     @Published var hasPermissions = false
-    // 新增：预热与倒计时状态
+    // Added: Warm-up and countdown status
     @Published var isWarmingUp = false
     @Published var countdown: Int = 0
 
     
-    // 录制时长跟踪
+    // Recording duration tracking
     @Published var recordingDuration: TimeInterval = 0.0
     private var recordingTimer: Timer?
     
-    // 移除 @Published，防止高频(100Hz)数据更新导致 SwiftUI 界面全局疯狂重绘而卡死
+    // Remove @Published to prevent high-frequency (100Hz) data updates from causing global SwiftUI view redraws and freezes
     var currentAudioLevel: Float = 0.0
     var currentIMUAcceleration: (x: Double, y: Double, z: Double) = (0.0, 0.0, 0.0)
     var currentIMUGravity: (x: Double, y: Double, z: Double) = (0.0, 0.0, 0.0)
     var currentIMUGyroscope: (x: Double, y: Double, z: Double) = (0.0, 0.0, 0.0)
     var currentIMUOrientation: (roll: Double, pitch: Double, yaw: Double) = (0.0, 0.0, 0.0)
 
-    // 设置项
+    // Settings
     @Published var useFrontCamera: Bool = false {
         didSet {
             if hasPermissions {
@@ -61,22 +61,22 @@ class SensorManager: NSObject, ObservableObject {
         }
     }
 
-    // 1. 硬件管理器
+    // 1. Hardware managers
     let captureSession = AVCaptureSession()
     private let motionManager = CMMotionManager()
 
     private let videoOutput = AVCaptureVideoDataOutput()
     private let audioOutput = AVCaptureAudioDataOutput()
 
-    // 2. 独立的数据处理队列（防止阻塞主线程）
+    // 2. Independent data processing queues (to prevent blocking the main thread)
     private let videoQueue = DispatchQueue(label: "com.jeffluo.videoQueue", qos: .userInteractive)
     private let audioQueue = DispatchQueue(label: "com.jeffluo.audioQueue", qos: .userInteractive)
     private let imuQueue = OperationQueue()
     
-    // 3. 文件写入器与队列
+    // 3. File writers and queues
     private var currentSessionURL: URL?
     
-    // 高效的音视频写入器
+    // Efficient audio and video writers
     private var assetWriter: AVAssetWriter?
     private var videoWriterInput: AVAssetWriterInput?
     private var audioWriterInput: AVAssetWriterInput?
@@ -89,7 +89,7 @@ class SensorManager: NSObject, ObservableObject {
     private var actualVideoFrameRate: Double?
     private let timestampLock = NSLock()
     private var recordingStartTime: Date?
-    private var targetStartTime: Double? // 绝对物理起跑线
+    private var targetStartTime: Double? // Absolute physical start line
 
 
     override init() {
@@ -97,7 +97,7 @@ class SensorManager: NSObject, ObservableObject {
         imuQueue.qualityOfService = .userInteractive
     }
 
-    // 视频帧率选项
+    // Video frame rate options
     enum VideoFrameRateOption: String, CaseIterable, Identifiable {
         case max = "Max"
         case s1 = "1s"
@@ -106,7 +106,7 @@ class SensorManager: NSObject, ObservableObject {
         var id: String { self.rawValue }
     }
 
-    // IMU采样率选项
+    // IMU sample rate options
     enum IMUSampleRateOption: String, CaseIterable, Identifiable {
         case hz100 = "100Hz"
         case hz20 = "20Hz"
@@ -114,7 +114,7 @@ class SensorManager: NSObject, ObservableObject {
         var id: String { self.rawValue }
     }
     
-    // MARK: - 权限申请
+    // MARK: - Permission Request
     func requestPermissions() {
         AVCaptureDevice.requestAccess(for: .video) { videoGranted in
             AVCaptureDevice.requestAccess(for: .audio) { audioGranted in
@@ -128,16 +128,16 @@ class SensorManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - 硬件初始化
+    // MARK: - Hardware Initialization
     func setupHardware() {
           captureSession.beginConfiguration()
 
-          // 设置分辨率为1280x720（720p）
+          // Set resolution to 1280x720 (720p)
           if captureSession.canSetSessionPreset(.hd1280x720) {
             captureSession.sessionPreset = .hd1280x720
           }
 
-          // --- 视频配置 ---
+          // --- Video Configuration ---
           let position: AVCaptureDevice.Position = useFrontCamera ? .front : .back
           guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
               let videoInput = try? AVCaptureDeviceInput(device: videoDevice) else { return }
@@ -147,7 +147,7 @@ class SensorManager: NSObject, ObservableObject {
           videoOutput.alwaysDiscardsLateVideoFrames = true
           if captureSession.canAddOutput(videoOutput) { captureSession.addOutput(videoOutput) }
 
-          // --- 音频配置 ---
+          // --- Audio Configuration ---
           guard let audioDevice = AVCaptureDevice.default(for: .audio),
               let audioInput = try? AVCaptureDeviceInput(device: audioDevice) else { return }
           if captureSession.canAddInput(audioInput) { captureSession.addInput(audioInput) }
@@ -159,14 +159,14 @@ class SensorManager: NSObject, ObservableObject {
 
           updateVideoFrameRate()
 
-          // --- IMU 配置 ---
+          // --- IMU Configuration ---
           if motionManager.isDeviceMotionAvailable {
             updateIMUSampleRate()
-            // 提前启动 IMU 数据流以供 UI 实时预览
+            // Start IMU data stream early for UI real-time preview
             motionManager.startDeviceMotionUpdates(to: imuQueue) { [weak self] (motion, error) in
                 guard let self = self, let motion = motion else { return }
                 
-                // 纯后台线程更新数据，彻底放过主线程
+                // Update data purely on background thread, freeing up the main thread completely
                 self.currentIMUAcceleration = (motion.userAcceleration.x, motion.userAcceleration.y, motion.userAcceleration.z)
                 self.currentIMUGravity = (motion.gravity.x, motion.gravity.y, motion.gravity.z)
                 self.currentIMUGyroscope = (motion.rotationRate.x, motion.rotationRate.y, motion.rotationRate.z)
@@ -175,10 +175,10 @@ class SensorManager: NSObject, ObservableObject {
                 if self.isRecording || self.isWarmingUp {
                     let imuTime = motion.timestamp
                     
-                    // 核心阀门：扔掉 3 秒前预热阶段的 IMU 脏数据
+                    // Core gate: Discard dirty IMU data from the 3-second warm-up phase
                     guard let target = self.targetStartTime, imuTime >= target else { return }
                     
-                    // 首次闯过闸门
+                    // First data passing the gate
                     self.timestampLock.lock()
                     if self.firstTimestamp == nil {
                         self.firstTimestamp = imuTime
@@ -191,21 +191,21 @@ class SensorManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - 切换摄像头
+    // MARK: - Switch Camera
     func switchCamera() {
-        // 切换硬件放在后台线程执行，防止 Picker 切换时界面卡顿
+        // Execute hardware switching on a background thread to prevent UI freezing during Picker switching
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
             self.captureSession.beginConfiguration()
             
-            // 1. 找到并移除现有的视频输入
+            // 1. Find and remove existing video inputs
             let currentVideoInputs = self.captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }.filter { $0.device.hasMediaType(.video) }
             for input in currentVideoInputs {
                 self.captureSession.removeInput(input)
             }
             
-            // 2. 根据最新设置添加新的视频输入
+            // 2. Add new video input based on the latest settings
             let position: AVCaptureDevice.Position = self.useFrontCamera ? .front : .back
             guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
                   let videoInput = try? AVCaptureDeviceInput(device: videoDevice) else {
@@ -217,29 +217,29 @@ class SensorManager: NSObject, ObservableObject {
             
             self.captureSession.commitConfiguration()
             
-            // 切换镜头后，重新应用当前的帧率设置
+            // Re-apply the current frame rate settings after switching the lens
             self.updateVideoFrameRate()
         }
     }
     
-    // MARK: - 动态更新硬件频率
+    // MARK: - Dynamically Update Hardware Frequencies
     func updateVideoFrameRate() {
-        // 1. 找到当前正在使用的视频设备
+        // 1. Find the video device currently in use
         guard let videoInput = captureSession.inputs.compactMap({ $0 as? AVCaptureDeviceInput }).first(where: { $0.device.hasMediaType(.video) }) else { return }
         let videoDevice = videoInput.device
         
         var targetFPS: Double
         switch videoFrameRateOption {
-        case .max: targetFPS = 60.0 // 设为 60 会在下方逻辑中自动限制回当前格式支持的最大值
+        case .max: targetFPS = 60.0 // Setting to 60 will automatically clamp to the maximum supported by the current format in the logic below
         case .s1: targetFPS = 1.0
-        case .s10: targetFPS = 0.1 // 10秒1帧
+        case .s10: targetFPS = 0.1 // 1 frame per 10 seconds
         case .custom: targetFPS = customVideoFrameRate > 0 ? customVideoFrameRate : 30.0
         }
         
         do {
             try videoDevice.lockForConfiguration()
             
-            // 2. 核心安全机制：获取摄像头当前格式支持的帧率范围。如果强行设置不支持的帧率（比如 0.1 FPS）会导致 App 崩溃
+            // 2. Core safety mechanism: Get the supported frame rate range for the camera's current format. Forcing an unsupported frame rate (e.g., 0.1 FPS) will crash the App
             let ranges = videoDevice.activeFormat.videoSupportedFrameRateRanges
             guard let minAllowed = ranges.min(by: { $0.minFrameRate < $1.minFrameRate })?.minFrameRate,
                   let maxAllowed = ranges.max(by: { $0.maxFrameRate < $1.maxFrameRate })?.maxFrameRate else {
@@ -247,7 +247,7 @@ class SensorManager: NSObject, ObservableObject {
                 return
             }
             
-            // 3. 将目标帧率钳制在允许的范围内
+            // 3. Clamp the target frame rate within the allowed range
             let clampedFPS = max(minAllowed, min(maxAllowed, targetFPS))
             let frameDuration = CMTime(seconds: 1.0 / clampedFPS, preferredTimescale: 600)
             
@@ -255,9 +255,9 @@ class SensorManager: NSObject, ObservableObject {
             videoDevice.activeVideoMaxFrameDuration = frameDuration
             
             videoDevice.unlockForConfiguration()
-            print("📷 视频帧率已生效: \(String(format: "%.1f", clampedFPS)) FPS")
+            print("📷 Video frame rate applied: \(String(format: "%.1f", clampedFPS)) FPS")
         } catch {
-            print("📷 设置帧率失败: \(error)")
+            print("📷 Failed to set frame rate: \(error)")
         }
     }
     
@@ -265,24 +265,24 @@ class SensorManager: NSObject, ObservableObject {
         guard motionManager.isDeviceMotionAvailable else { return }
         let targetHz: Double = (imuSampleRateOption == .hz100) ? 100.0 : ((imuSampleRateOption == .hz20) ? 20.0 : (customIMUSampleRate > 0 ? customIMUSampleRate : 100.0))
         motionManager.deviceMotionUpdateInterval = 1.0 / targetHz
-        print("📳 IMU 采样率已生效: \(targetHz) Hz")
+        print("📳 IMU sample rate applied: \(targetHz) Hz")
     }
     
-    // MARK: - 录制控制
+    // MARK: - Recording Control
     func startRecording() {
         guard hasPermissions else { return }
         
-        // --- 1. 设置未来的绝对起跑线（当前开机时间 + 3秒） ---
+        // --- 1. Set the future absolute start line (current uptime + 3 seconds) ---
         let absoluteNow = CACurrentMediaTime()
         self.targetStartTime = absoluteNow + 3.0
         
-        // 重置状态
+        // Reset status
         self.firstTimestamp = nil
         self.actualVideoFrameRate = nil
-        self.recordingStartTime = Date().addingTimeInterval(3.0) // UI 上显示的时间也要加3秒
+        self.recordingStartTime = Date().addingTimeInterval(3.0) // The time displayed on the UI also needs to add 3 seconds
         self.hasStartedAudioSession = false
         
-        // --- 2. 创建目录、初始化文件与写入器 (保持你原来的逻辑) ---
+        // --- 2. Create directories, initialize files and writers ---
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
         let folderName = "Record_" + formatter.string(from: self.recordingStartTime!)
@@ -291,7 +291,7 @@ class SensorManager: NSObject, ObservableObject {
         try? FileManager.default.createDirectory(at: sessionURL, withIntermediateDirectories: true)
         self.currentSessionURL = sessionURL
         
-        // --- 2a. 获取实际视频帧率 ---
+        // --- 2a. Get actual video frame rate ---
         if let videoInput = captureSession.inputs.compactMap({ $0 as? AVCaptureDeviceInput }).first(where: { $0.device.hasMediaType(.video) }) {
             let videoDevice = videoInput.device
             if videoDevice.activeVideoMinFrameDuration.seconds > 0 {
@@ -299,11 +299,11 @@ class SensorManager: NSObject, ObservableObject {
             }
         }
         
-        // --- 2b. 配置高效的 AVAssetWriter，用于将音视频流写入单个 MP4 文件 ---
+        // --- 2b. Configure an efficient AVAssetWriter to write audio and video streams into a single MP4 file ---
         let videoURL = sessionURL.appendingPathComponent("Video.mp4")
         assetWriter = try? AVAssetWriter(url: videoURL, fileType: .mp4)
 
-        // 配置视频输入
+        // Configure video input
         let videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: 1280,
@@ -315,7 +315,7 @@ class SensorManager: NSObject, ObservableObject {
             assetWriter?.add(vwi)
         }
 
-        // 配置音频输入
+        // Configure audio input
         let audioSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: 48000,
@@ -329,7 +329,7 @@ class SensorManager: NSObject, ObservableObject {
         }
         assetWriter?.startWriting()
         
-        // --- 2c. 创建 IMU CSV 句柄并写入表头 ---
+        // --- 2c. Create IMU CSV handles and write headers ---
         let xyzHeader = "time\tseconds_elapsed\tz\ty\tx\n"
         let rpyHeader = "time\tseconds_elapsed\tyaw\tpitch\troll\n"
         accFile = createCSV(name: "Accelerometer.csv", in: sessionURL, header: xyzHeader)
@@ -337,7 +337,7 @@ class SensorManager: NSObject, ObservableObject {
         gyroFile = createCSV(name: "Gyroscope.csv", in: sessionURL, header: xyzHeader)
         oriFile = createCSV(name: "Orientation.csv", in: sessionURL, header: rpyHeader)
         
-        // --- 3. 启动 UI 倒计时，并标记为预热状态 ---
+        // --- 3. Start UI countdown and mark as warm-up status ---
         DispatchQueue.main.async {
             self.isWarmingUp = true
             self.countdown = 3
@@ -346,7 +346,7 @@ class SensorManager: NSObject, ObservableObject {
                 guard let self = self else { return }
                 self.countdown -= 1
                 
-                // 3秒倒计时结束，正式转为录制状态！
+                // 3-second countdown ends, officially switch to recording status!
                 if self.countdown == 0 {
                     timer.invalidate()
                     self.isWarmingUp = false
@@ -361,14 +361,14 @@ class SensorManager: NSObject, ObservableObject {
                 }
             }
         }
-        print("====== ⏳ 硬件启动，开始 3 秒预热抛弃数据... ======")
+        print("====== ⏳ Hardware started, beginning 3-second warm-up to discard data... ======")
     }
     
     func stopRecording() {
         DispatchQueue.main.async {
             self.isRecording = false
-            self.isWarmingUp = false // 增加这行
-            self.targetStartTime = nil // 增加这行
+            self.isWarmingUp = false // Added this line
+            self.targetStartTime = nil // Added this line
             self.recordingTimer?.invalidate()
             self.recordingTimer = nil
         }
@@ -377,7 +377,7 @@ class SensorManager: NSObject, ObservableObject {
             createMetadataFile(at: sessionURL)
         }
         
-        // 收尾音视频写入
+        // Finalize audio and video writing
         videoWriterInput?.markAsFinished()
         audioWriterInput?.markAsFinished()
         assetWriter?.finishWriting { [weak self] in
@@ -386,23 +386,23 @@ class SensorManager: NSObject, ObservableObject {
             self?.audioWriterInput = nil
         }
         
-        // 关闭 IMU 句柄
+        // Close IMU handles
         try? accFile?.close()
         try? gravFile?.close()
         try? gyroFile?.close()
         try? oriFile?.close()
-        print("====== 🛑 停止录制 ======")
+        print("====== 🛑 Recording stopped ======")
     }
     
     private func createCSV(name: String, in folder: URL, header: String) -> FileHandle? {
         let url = folder.appendingPathComponent(name)
-        // 1. 创建文件并写入表头。这会覆盖任何同名旧文件，确保从新文件开始。
+        // 1. Create file and write header. This overwrites any old file with the same name, ensuring a fresh start.
         FileManager.default.createFile(atPath: url.path, contents: header.data(using: .utf8), attributes: nil)
         
         do {
-            // 2. 以“更新”模式打开文件句柄，这种模式不会清空文件内容。
+            // 2. Open file handle in "update" mode, which does not clear file contents.
             let fileHandle = try FileHandle(forUpdating: url)
-            // 3. 将指针移动到文件末尾，为“追加”数据做准备。
+            // 3. Move pointer to the end of the file, preparing to "append" data.
             fileHandle.seekToEndOfFile()
             return fileHandle
         } catch { return nil }
@@ -415,7 +415,7 @@ class SensorManager: NSObject, ObservableObject {
         let version = "3"
 
         // 2. device name
-        let deviceName = UIDevice.current.modelName // 使用更具体的手机型号
+        let deviceName = UIDevice.current.modelName // Use a more specific phone model
 
         // 3. recording start uptime (ms)
         let recordingUptimeMs = Int64((firstTimestamp ?? 0) * 1000)
@@ -459,8 +459,8 @@ class SensorManager: NSObject, ObservableObject {
         try? contents.write(to: metadataURL, atomically: true, encoding: .utf8)
     }
 
-    // MARK: - MP4音频提取为WAV
-    /// 从MP4文件中提取音频为WAV，完成后回调主线程
+    // MARK: - Extract Audio from MP4 to WAV
+    /// Extract audio from MP4 to WAV, callback to main thread upon completion
     func extractAudioFromVideo(videoURL: URL) async throws -> URL {
         let asset = AVURLAsset(url: videoURL)
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
@@ -476,7 +476,7 @@ class SensorManager: NSObject, ObservableObject {
         }
     }
 
-    // 提取音频的工作类，使用 @unchecked Sendable 屏蔽底层 C 语言框架的并发警告
+    // Audio extraction worker class, using @unchecked Sendable to suppress concurrency warnings from underlying C frameworks
     private final class AudioExtractorWorker: @unchecked Sendable {
         let outputURL: URL
         private let reader: AVAssetReader
@@ -488,7 +488,7 @@ class SensorManager: NSObject, ObservableObject {
             self.outputURL = videoURL.deletingPathExtension().appendingPathExtension("wav")
             try? FileManager.default.removeItem(at: outputURL)
 
-            // 必须使用与 audioTrack 同属一个实例的 asset
+            // Must use the asset that belongs to the same instance as audioTrack
             self.reader = try AVAssetReader(asset: asset)
             let outputSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48000,
@@ -528,53 +528,53 @@ class SensorManager: NSObject, ObservableObject {
     }
 }
 
-// MARK: - 音视频帧底层回调
+// MARK: - Audio and Video Frame Underlying Callbacks
 extension SensorManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         
-        // --- 1. UI 数据实时更新（非录制和非预热状态也需要，为了让屏幕波形一直动） ---
+        // --- 1. Real-time UI data update (also needed in non-recording and non-warming-up states to keep the screen waveform moving) ---
         if output == audioOutput, let channel = connection.audioChannels.first {
             let power = channel.averagePowerLevel
             let level = max(0.0, min(1.0, (power + 50) / 50))
             self.currentAudioLevel = level
         }
         
-        // --- 2. 状态放行：只有在“正在录制”或“正在预热”时，才继续往下走 ---
+        // --- 2. Status pass: Continue only when "recording" or "warming up" ---
         guard isRecording || isWarmingUp else { return }
         
-        // 提取硬件层面的绝对呈现时间 (Presentation Timestamp)
+        // Extract absolute presentation time at the hardware level (Presentation Timestamp)
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let timestampInSeconds = CMTimeGetSeconds(pts)
         
         // =========================================================
-        // 核心拦截闸门 (Data Gate)：丢弃预热期的脏数据
+        // Core Interception Gate (Data Gate): Discard dirty data from the warm-up period
         // =========================================================
         if let target = targetStartTime, timestampInSeconds < target {
-            // 时间还没到 3 秒！说明底层的相机和麦克风还在疯狂初始化。
-            // 此时的数据充满延迟和抖动，我们直接 return，把它无情扔掉！
+            // Less than 3 seconds elapsed! The underlying camera and microphone are still initializing.
+            // The data at this time is full of latency and jitter, we directly return and discard it ruthlessly!
             return
         }
         // =========================================================
         
-        // --- 首次冲过闸门的数据！它将决定整个宇宙的绝对起跑时间 (T0) ---
+        // --- First data to pass through the gate! It will determine the absolute start time (T0) of the entire session ---
         timestampLock.lock()
         if self.firstTimestamp == nil {
             self.firstTimestamp = timestampInSeconds
-            print("[音视频流] 预热结束！首帧冲过闸门，绝对起跑时间：\(String(format: "%.5f", timestampInSeconds))")
+            print("[A/V Stream] Warm-up finished! First frame passed the gate, absolute start time: \(String(format: "%.5f", timestampInSeconds))")
         }
         timestampLock.unlock()
         
-        // --- 写入音视频流 (MP4) ---
+        // --- Write audio and video streams (MP4) ---
         guard let writer = assetWriter, writer.status == .writing else { return }
         
-        // 首次有效数据帧抵达时，用它的真实物理时间戳(pts)作为 MP4 的起始时间！
+        // When the first valid data frame arrives, use its true physical timestamp (pts) as the MP4 start time!
         if !hasStartedAudioSession {
             writer.startSession(atSourceTime: pts)
             hasStartedAudioSession = true
-            print("🎬 MP4 容器正式在此时刻开启写入！")
+            print("🎬 MP4 container officially starts writing at this moment!")
         }
         
-        // 将视频帧和音频帧分别喂给对应的写入器输入
+        // Feed video frames and audio frames to their corresponding writer inputs
         if output == videoOutput, let input = videoWriterInput, input.isReadyForMoreMediaData {
             input.append(sampleBuffer)
         } else if output == audioOutput, let input = audioWriterInput, input.isReadyForMoreMediaData {
@@ -582,9 +582,9 @@ extension SensorManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         }
     }
     
-    // 供 IMU 回调使用，安全写入文件
+    // For use by the IMU callback, safely write to file
     func writeIMU(_ motion: CMDeviceMotion, timestamp: Double) {
-        let elapsed = timestamp - (firstTimestamp ?? timestamp) // seconds_elapsed 保持不变
+        let elapsed = timestamp - (firstTimestamp ?? timestamp) // seconds_elapsed remains unchanged
         let timeStr = String(format: "%.5f", timestamp)
         let elapsedStr = String(format: "%.5f", elapsed)
         try? accFile?.write(contentsOf: Data("\(timeStr)\t\(elapsedStr)\t\(motion.userAcceleration.z)\t\(motion.userAcceleration.y)\t\(motion.userAcceleration.x)\n".utf8))

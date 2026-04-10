@@ -30,7 +30,7 @@ struct ContentView: View {
                 }
         }
         .onAppear {
-            // 1. App 加载时主动申请摄像头和麦克风权限
+            // 1. Proactively request camera and microphone permissions when the App loads
             sensorManager.requestPermissions()
         }
     }
@@ -45,7 +45,7 @@ struct SettingView: View {
     var body: some View {
         NavigationView {
             Form {
-                // 摄像头选择
+                // Camera selection
                 Section(header: Text("Camera Selection")) {
                     Picker("Camera", selection: $sensorManager.useFrontCamera) {
                         Text("Rear").tag(false)
@@ -54,7 +54,7 @@ struct SettingView: View {
                     .pickerStyle(SegmentedPickerStyle())
                 }
 
-                // 视频帧率
+                // Video frame rate
                 Section(header: Text("Video Frame Rate")) {
                     Picker("Frame Rate", selection: $sensorManager.videoFrameRateOption) {
                         ForEach(SensorManager.VideoFrameRateOption.allCases) { option in
@@ -73,7 +73,7 @@ struct SettingView: View {
                     }
                 }
 
-                // IMU采样率
+                // IMU sample rate
                 Section(header: Text("IMU Sample Rate")) {
                     Picker("IMU Rate", selection: $sensorManager.imuSampleRateOption) {
                         ForEach(SensorManager.IMUSampleRateOption.allCases) { option in
@@ -106,19 +106,19 @@ struct MeasurementView: View {
     @State private var imuXRaw: [Double] = Array(repeating: 0, count: 80)
     @State private var imuYRaw: [Double] = Array(repeating: 0, count: 80)
     @State private var imuZRaw: [Double] = Array(repeating: 0, count: 80)
-    // MARK: 延迟补偿后的IMU数据
-    private var imuDelayFrames: Int { 0 } // 0.05s*4=0.2s，实际可调
+    // MARK: IMU data after delay compensation
+    private var imuDelayFrames: Int { 0 } // 0.05s*4=0.2s, adjustable in practice
     private var imuX: [Double] { Array(imuXRaw.dropFirst(imuDelayFrames)) + Array(repeating: 0, count: imuDelayFrames) }
     private var imuY: [Double] { Array(imuYRaw.dropFirst(imuDelayFrames)) + Array(repeating: 0, count: imuDelayFrames) }
     private var imuZ: [Double] { Array(imuZRaw.dropFirst(imuDelayFrames)) + Array(repeating: 0, count: imuDelayFrames) }
 
-    // 闪烁红点动画控制
+    // Blinking red dot animation control
     @State private var isBlinking: Bool = false
 
-    // 使用定时器以20FPS(0.05秒)拉取并刷新波形，避免主线程被卡死
+    // Use a timer to fetch and refresh the waveform at 20FPS (0.05 seconds) to avoid freezing the main thread
     let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
 
-    // 将秒数转为 MM:SS 格式
+    // Convert seconds to MM:SS format
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
@@ -127,23 +127,23 @@ struct MeasurementView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            // 摄像头画面与录制指示器叠加
+            // Camera preview overlaid with recording indicators
             ZStack(alignment: .top) {
                 CameraPreview(session: sensorManager.captureSession)
                     .aspectRatio(3.0 / 4.0, contentMode: .fit) 
                     .cornerRadius(12)
                 
-                // 🌟 新增：3秒全屏倒计时 UI
+                // 🌟 Added: 3-second full-screen countdown UI
                 if sensorManager.isWarmingUp {
                     Text("\(sensorManager.countdown)")
                         .font(.system(size: 120, weight: .black, design: .rounded))
                         .foregroundColor(.white)
                         .shadow(color: .black, radius: 10, x: 0, y: 5)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                        .background(Color.black.opacity(0.3)) // 加一层半透明黑色遮罩
+                        .background(Color.black.opacity(0.3)) // Add a semi-transparent black overlay
                         .cornerRadius(12)
                 }
-                // 录制时的悬浮窗
+                // Floating window during recording
                 if sensorManager.isRecording {
                     HStack(spacing: 8) {
                         Circle()
@@ -169,7 +169,7 @@ struct MeasurementView: View {
             }
             .padding(.horizontal)
 
-            // 麦克风波形
+            // Microphone waveform
             VStack(alignment: .leading) {
                 Text("Microphone Waveform")
                     .font(.caption)
@@ -177,10 +177,10 @@ struct MeasurementView: View {
                     .frame(height: 60)
                     .background(Color(.systemGray6))
                     .cornerRadius(8)
-                    .padding(.horizontal, 8) // 让波形更宽
+                    .padding(.horizontal, 8) // Make waveform wider
             }
 
-            // IMU三轴折线图
+            // IMU 3-axis line chart
             VStack(alignment: .leading) {
                 HStack {
                     Text("IMU Waveform (XYZ)")
@@ -209,7 +209,7 @@ struct MeasurementView: View {
 
             Spacer()
             
-            // 录制/停止 按钮
+            // Record/Stop button
             Button(action: {
                 if sensorManager.isRecording {
                     sensorManager.stopRecording()
@@ -219,16 +219,16 @@ struct MeasurementView: View {
                 }
             }) {
                 ZStack {
-                    Circle() // 外圈
+                    Circle() // Outer circle
                         .stroke(sensorManager.isRecording ? Color.red : Color.gray, lineWidth: 3)
                         .frame(width: 68, height: 68)
                     
                     if sensorManager.isRecording {
-                        RoundedRectangle(cornerRadius: 6) // 停止方块
+                        RoundedRectangle(cornerRadius: 6) // Stop square
                             .fill(Color.red)
                             .frame(width: 24, height: 24)
                     } else {
-                        Circle() // 录制圆点
+                        Circle() // Record dot
                             .fill(Color.red)
                             .frame(width: 56, height: 56)
                     }
@@ -237,11 +237,11 @@ struct MeasurementView: View {
             .padding(.bottom, 20)
         }
         .onAppear {
-            // 如果有权限但session未配置，主动配置
+            // Actively configure if permissions are granted but session is not configured
             if sensorManager.hasPermissions && sensorManager.captureSession.inputs.isEmpty {
                 sensorManager.setupHardware()
             }
-            // 自动启动摄像头画面
+            // Automatically start the camera preview
             if sensorManager.hasPermissions && !sensorManager.captureSession.isRunning {
                 DispatchQueue.global(qos: .userInitiated).async {
                     sensorManager.captureSession.startRunning()
@@ -249,10 +249,10 @@ struct MeasurementView: View {
             }
         }
         .onReceive(timer) { _ in
-            // 采样音频电平
+            // Sample audio level
             audioLevels.append(sensorManager.currentAudioLevel)
             if audioLevels.count > 80 { audioLevels.removeFirst() }
-            // 采样IMU三轴（原始）
+            // Sample IMU 3-axis (raw)
             imuXRaw.append(sensorManager.currentIMUAcceleration.x)
             if imuXRaw.count > 80 { imuXRaw.removeFirst() }
             imuYRaw.append(sensorManager.currentIMUAcceleration.y)
@@ -260,9 +260,9 @@ struct MeasurementView: View {
             imuZRaw.append(sensorManager.currentIMUAcceleration.z)
             if imuZRaw.count > 80 { imuZRaw.removeFirst() }
         }
-        // 修复 iOS 17 的 onChange 弃用警告
+        // Fix onChange deprecation warning for iOS 17
         .onChange(of: sensorManager.hasPermissions) { _, newValue in
-            // 监听到权限被授予后，若 session 未运行则启动它
+            // Start the session if it's not running after detecting permissions are granted
             if newValue && !sensorManager.captureSession.isRunning {
                 DispatchQueue.global(qos: .userInitiated).async {
                     sensorManager.captureSession.startRunning()
@@ -277,13 +277,13 @@ struct WaveformView: View {
     let values: [Float]
     var body: some View {
         GeometryReader { geo in
-            let spacing: CGFloat = 0.5 // 更细的间隔
+            let spacing: CGFloat = 0.5 // Finer spacing
             let totalSpacing = spacing * CGFloat(values.count - 1)
             let width = max(1, (geo.size.width - totalSpacing) / CGFloat(values.count))
             HStack(alignment: .center, spacing: spacing) {
                 ForEach(0..<values.count, id: \ .self) { i in
                     Capsule()
-                        .fill(Color.accentColor) // 使用主题色，更美观
+                        .fill(Color.accentColor) // Use accent color for a better look
                         .frame(width: width, height: max(1, CGFloat(values[i]) * geo.size.height))
                 }
             }
@@ -292,7 +292,7 @@ struct WaveformView: View {
     }
 }
 
-// IMU三轴折线图
+// IMU 3-axis line chart
 struct IMULineChartView: View {
     let x: [Double]
     let y: [Double]
@@ -345,7 +345,7 @@ struct IMULineChartView: View {
 
 // MARK: - DataView
 
-// 定义自定义分享包装器：在点击分享时，瞬间将选中的 Block 文件夹压缩为 .zip
+// Define custom share wrapper: Instantly compress the selected Block folder into a .zip when sharing is clicked
 struct ZipDirectory: Transferable {
     let url: URL
     static var transferRepresentation: some TransferRepresentation {
@@ -383,7 +383,7 @@ struct DataView: View {
         NavigationView {
             List {
                 if recordedFiles.isEmpty {
-                    Text("暂无录制数据，请先前往 Measurement 录制。")
+                    Text("No recorded data, please go to Measurement to record.")
                         .foregroundColor(.gray)
                 } else {
                     ForEach(recordedFiles, id: \.self) { fileURL in
@@ -423,7 +423,7 @@ struct DataView: View {
                                     .font(.title2)
                                     .foregroundColor(.blue)
                             }
-                            .buttonStyle(PlainButtonStyle()) // 允许多个按钮在同一行
+                            .buttonStyle(PlainButtonStyle()) // Allow multiple buttons on the same line
                         }
                         .padding(.vertical, 4)
                         .swipeActions(edge: .leading) {
@@ -448,27 +448,27 @@ struct DataView: View {
                 Button("Save", action: renameItem)
                 Button("Cancel", role: .cancel) { }
             }
-            // 打包进度弹窗
+            // Zipping progress popup
             .sheet(isPresented: $showZipProgress) {
                 VStack(spacing: 20) {
-                    Text("正在打包为ZIP...")
+                    Text("Zipping into ZIP...")
                     ProgressView(value: zipManager.progressDict[zipBlockURL ?? URL(fileURLWithPath:"")]?.progress ?? 0)
                         .progressViewStyle(LinearProgressViewStyle())
                         .frame(width: 200)
-                    Button("取消") {
+                    Button("Cancel") {
                         showZipProgress = false
                     }
                 }
                 .padding()
             }
-            // 打包完成后弹窗询问是否分享
-            .alert("ZIP已生成，是否分享？", isPresented: $showShareSheet, actions: {
+            // Popup asking whether to share after zipping is complete
+            .alert("ZIP generated, share?", isPresented: $showShareSheet, actions: {
                 if let url = zipResultURL {
-                    Button("分享") {
+                    Button("Share") {
                         shareZip(url: url)
                     }
                 }
-                Button("关闭", role: .cancel) {
+                Button("Close", role: .cancel) {
                     if let url = zipResultURL {
                         zipManager.cleanup(url: url)
                     }
@@ -478,16 +478,16 @@ struct DataView: View {
                     Text(url.lastPathComponent)
                 }
             })
-            // 打包失败弹窗
-            .alert("打包失败", isPresented: $showZipError) {}
+            // Zipping failed popup
+            .alert("Zipping failed", isPresented: $showZipError) {}
         }
     }
 
-    // 分享zip
+    // Share zip
     func shareZip(url: URL) {
         let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         
-        // 分享面板关闭（无论成功还是取消）后，自动清理临时 zip 文件
+        // Automatically clean up the temporary zip file after the share panel is closed (whether successful or cancelled)
         av.completionWithItemsHandler = { [weak zipManager] _, _, _, _ in
             zipManager?.cleanup(url: url)
         }
@@ -498,9 +498,9 @@ struct DataView: View {
         }
     }
     
-    // MARK: - 文件管理逻辑
+    // MARK: - File Management Logic
     
-        // 1. 读取沙盒 Documents 目录下的文件夹 Block
+        // 1. Read Block folders under the sandbox Documents directory
         private func loadFiles() {
             guard let documentDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
             do {
@@ -516,24 +516,24 @@ struct DataView: View {
                     return date1 > date2
                 }
             } catch {
-                print("加载文件失败: \(error)")
+                print("Failed to load files: \(error)")
             }
         }
     
-    // 2. 删除文件
+    // 2. Delete files
     private func deleteFiles(at offsets: IndexSet) {
         for index in offsets {
             let fileURL = recordedFiles[index]
             do {
                 try FileManager.default.removeItem(at: fileURL)
             } catch {
-                print("删除文件失败: \(error)")
+                print("Failed to delete files: \(error)")
             }
         }
         recordedFiles.remove(atOffsets: offsets)
     }
     
-    // 3. 重命名 Block
+    // 3. Rename Block
     private func renameItem() {
         guard let oldURL = itemToRename, !newName.isEmpty else { return }
         let newURL = oldURL.deletingLastPathComponent().appendingPathComponent(newName)
@@ -541,11 +541,11 @@ struct DataView: View {
             try FileManager.default.moveItem(at: oldURL, to: newURL)
             loadFiles()
         } catch {
-            print("重命名失败: \(error)")
+            print("Failed to rename: \(error)")
         }
     }
     
-    // 4. 递归计算整个 Block 文件夹的体积并格式化
+    // 4. Recursively calculate the volume of the entire Block folder and format it
     private func getDirectorySize(url: URL) -> String {
         var size: Int64 = 0
         if let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) {
@@ -557,7 +557,7 @@ struct DataView: View {
             formatter.countStyle = .file
             return formatter.string(fromByteCount: size)
         }
-        return "未知大小"
+        return "Unknown size"
     }
 }
 
@@ -624,7 +624,7 @@ struct BlockDetailView: View {
                 FileManager.default.fileExists(atPath: u2.path, isDirectory: &isDir2)
 
                 if isDir1.boolValue != isDir2.boolValue {
-                    return isDir1.boolValue // 文件夹优先
+                    return isDir1.boolValue // Folders first
                 }
                 return u1.lastPathComponent.localizedStandardCompare(u2.lastPathComponent) == .orderedAscending
             }
@@ -658,12 +658,12 @@ struct FileRow: View {
                             do {
                                 let audioURL = try await sensorManager.extractAudioFromVideo(videoURL: fileURL)
                                 await MainActor.run {
-                                    extractionMessage = "音频已成功提取到:\n\(audioURL.lastPathComponent)"
+                                    extractionMessage = "Audio successfully extracted to:\n\(audioURL.lastPathComponent)"
                                     refreshAction()
                                 }
                             } catch {
                                 await MainActor.run {
-                                    extractionMessage = "音频提取失败:\n\(error.localizedDescription)"
+                                    extractionMessage = "Audio extraction failed:\n\(error.localizedDescription)"
                                 }
                             }
                             await MainActor.run {
@@ -676,7 +676,7 @@ struct FileRow: View {
                             .foregroundColor(.blue)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .alert("音频提取", isPresented: $showExtractionAlert) {
+                    .alert("Audio Extraction", isPresented: $showExtractionAlert) {
                         Button("OK") { }
                     } message: {
                         Text(extractionMessage)
@@ -728,7 +728,7 @@ struct VideoPlayerView: View {
                         player.pause()
                     }
             } else {
-                Text("无法加载视频")
+                Text("Unable to load video")
                     .foregroundColor(.gray)
             }
         }
@@ -749,25 +749,25 @@ struct CSVPreviewView: View {
     @State private var isLoading: Bool = true
     @State private var errorMessage: String?
     
-    private let maxRowsToDisplay = 20 // 显示表头 + 19行数据
+    private let maxRowsToDisplay = 20 // Show header + 19 data rows
 
     var body: some View {
         VStack {
             if isLoading {
-                ProgressView("加载中...")
+                ProgressView("Loading...")
             } else if let errorMessage = errorMessage {
                 Text(errorMessage)
                     .foregroundColor(.red)
                     .padding()
             } else if rows.isEmpty {
-                Text("文件内容为空或无法解析。")
+                Text("File content is empty or cannot be parsed.")
                     .foregroundColor(.gray)
                     .padding()
             } else {
-                // 使用 ScrollView + LazyVStack 构建高可靠性的数据网格
+                // Use ScrollView + LazyVStack to build a highly reliable data grid
                 ScrollView(.horizontal) {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        // 表头
+                        // Header
                         HStack(spacing: 16) {
                             ForEach(0..<header.count, id: \.self) { index in
                                 Text(header[index])
@@ -776,7 +776,7 @@ struct CSVPreviewView: View {
                             }
                         }
                         Divider()
-                        // 数据行
+                        // Data rows
                         ForEach(rows) { row in
                             HStack(spacing: 16) {
                                 ForEach(0..<header.count, id: \.self) { index in
@@ -792,7 +792,7 @@ struct CSVPreviewView: View {
                 }
                 
                 if rows.count >= maxRowsToDisplay {
-                    Text("仅显示前 \(maxRowsToDisplay) 行数据，完整内容请导出查看。")
+                    Text("Only showing the first \(maxRowsToDisplay) rows, please export to view full content.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .padding(.top, 5)
@@ -804,7 +804,7 @@ struct CSVPreviewView: View {
         .onAppear(perform: loadContent)
     }
 
-    // 辅助结构体，用于 Table 的 Identifiable 行
+    // Auxiliary struct for Identifiable rows in Table
     struct CSVRow: Identifiable {
         let id = UUID()
         let columns: [String]
@@ -824,20 +824,20 @@ struct CSVPreviewView: View {
                 
                 guard !lines.isEmpty else {
                     DispatchQueue.main.async {
-                        self.errorMessage = "文件为空。"
+                        self.errorMessage = "File is empty."
                         self.isLoading = false
                     }
                     return
                 }
                 
-                // 解析表头 (第一行)
+                // Parse header (first row)
                 let parsedHeader = lines[0].split(separator: "\t").map(String.init)
                 
-                // 解析数据行，限制数量 (maxRowsToDisplay + 1 to include the header in the count for min)
+                // Parse data rows, limit the number (maxRowsToDisplay + 1 to include the header in the count for min)
                 var parsedRows: [CSVRow] = []
                 for i in 1..<min(lines.count, self.maxRowsToDisplay + 1) {
                     let columns = lines[i].split(separator: "\t").map(String.init)
-                    // 确保每行数据列数与表头一致，避免 Table 崩溃
+                    // Ensure the number of columns in each row matches the header to prevent Table crashes
                     if columns.count == parsedHeader.count {
                         parsedRows.append(CSVRow(columns: columns))
                     } else {
@@ -852,7 +852,7 @@ struct CSVPreviewView: View {
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self.errorMessage = "加载文件内容失败:\n\(error.localizedDescription)"
+                    self.errorMessage = "Failed to load file content:\n\(error.localizedDescription)"
                     self.isLoading = false
                 }
             }
