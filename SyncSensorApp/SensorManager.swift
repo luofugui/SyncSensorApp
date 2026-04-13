@@ -82,7 +82,7 @@ class SensorManager: NSObject, ObservableObject {
     private var audioWriterInput: AVAssetWriterInput?
     private var hasStartedAudioSession = false
     
-    private var accFile, gravFile, gyroFile, oriFile: FileHandle?
+    private var accFile, gravFile, gyroFile, oriFile: BufferedFileWriter?
 
     // Metadata
     private var firstTimestamp: Double?
@@ -387,25 +387,20 @@ class SensorManager: NSObject, ObservableObject {
         }
         
         // Close IMU handles
-        try? accFile?.close()
-        try? gravFile?.close()
-        try? gyroFile?.close()
-        try? oriFile?.close()
+        accFile?.close()
+        gravFile?.close()
+        gyroFile?.close()
+        oriFile?.close()
         print("====== 🛑 Recording stopped ======")
     }
     
-    private func createCSV(name: String, in folder: URL, header: String) -> FileHandle? {
+    private func createCSV(name: String, in folder: URL, header: String) -> BufferedFileWriter? {
         let url = folder.appendingPathComponent(name)
         // 1. Create file and write header. This overwrites any old file with the same name, ensuring a fresh start.
         FileManager.default.createFile(atPath: url.path, contents: header.data(using: .utf8), attributes: nil)
         
-        do {
-            // 2. Open file handle in "update" mode, which does not clear file contents.
-            let fileHandle = try FileHandle(forUpdating: url)
-            // 3. Move pointer to the end of the file, preparing to "append" data.
-            fileHandle.seekToEndOfFile()
-            return fileHandle
-        } catch { return nil }
+        // 2. Open buffered writer (it handles "update" mode and appending internally)
+        return BufferedFileWriter(url: url)
     }
     
     private func createMetadataFile(at sessionURL: URL) {
@@ -587,10 +582,59 @@ extension SensorManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         let elapsed = timestamp - (firstTimestamp ?? timestamp) // seconds_elapsed remains unchanged
         let timeStr = String(format: "%.5f", timestamp)
         let elapsedStr = String(format: "%.5f", elapsed)
-        try? accFile?.write(contentsOf: Data("\(timeStr)\t\(elapsedStr)\t\(motion.userAcceleration.z)\t\(motion.userAcceleration.y)\t\(motion.userAcceleration.x)\n".utf8))
-        try? gravFile?.write(contentsOf: Data("\(timeStr)\t\(elapsedStr)\t\(motion.gravity.z)\t\(motion.gravity.y)\t\(motion.gravity.x)\n".utf8))
-        try? gyroFile?.write(contentsOf: Data("\(timeStr)\t\(elapsedStr)\t\(motion.rotationRate.z)\t\(motion.rotationRate.y)\t\(motion.rotationRate.x)\n".utf8))
-        try? oriFile?.write(contentsOf: Data("\(timeStr)\t\(elapsedStr)\t\(motion.attitude.yaw)\t\(motion.attitude.pitch)\t\(motion.attitude.roll)\n".utf8))
+        accFile?.write("\(timeStr)\t\(elapsedStr)\t\(motion.userAcceleration.z)\t\(motion.userAcceleration.y)\t\(motion.userAcceleration.x)\n")
+        gravFile?.write("\(timeStr)\t\(elapsedStr)\t\(motion.gravity.z)\t\(motion.gravity.y)\t\(motion.gravity.x)\n")
+        gyroFile?.write("\(timeStr)\t\(elapsedStr)\t\(motion.rotationRate.z)\t\(motion.rotationRate.y)\t\(motion.rotationRate.x)\n")
+        oriFile?.write("\(timeStr)\t\(elapsedStr)\t\(motion.attitude.yaw)\t\(motion.attitude.pitch)\t\(motion.attitude.roll)\n")
+    }
+}
+
+// MARK: - Buffered File Writer (Performance Optimization)
+private final class BufferedFileWriter {
+    private let fileHandle: FileHandle
+    private var buffer: Data
+    private let capacity: Int
+    private let lock = NSLock() // Ensure thread safety between IMU queue and main thread closures
+
+    init?(url: URL, capacity: Int = 32768) { // Default capacity is 32KB
+        do {
+            self.fileHandle = try FileHandle(forUpdating: url)
+            self.fileHandle.seekToEndOfFile()
+            self.capacity = capacity
+            self.buffer = Data(capacity: capacity)
+        } catch {
+            return nil
+        }
+    }
+
+    func write(_ string: String) {
+        guard let data = string.data(using: .utf8) else { return }
+        lock.lock()
+        buffer.append(data)
+        if buffer.count >= capacity {
+            flushUnsafe()
+        }
+        lock.unlock()
+    }
+
+    private func flushUnsafe() {
+        if !buffer.isEmpty {
+            try? fileHandle.write(contentsOf: buffer)
+            buffer.removeAll(keepingCapacity: true) // Keep memory allocated for performance
+        }
+    }
+
+    func flush() {
+        lock.lock()
+        flushUnsafe()
+        lock.unlock()
+    }
+
+    func close() {
+        lock.lock()
+        flushUnsafe()
+        try? fileHandle.close()
+        lock.unlock()
     }
 }
 
